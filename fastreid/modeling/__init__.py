@@ -5,3 +5,4 @@
 """
 
 from .meta_arch import build_model
+from .base_module import BaseModule
