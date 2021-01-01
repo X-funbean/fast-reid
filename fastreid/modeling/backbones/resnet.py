@@ -15,6 +15,7 @@ from fastreid.layers import (
     SELayer,
     Non_local,
     get_norm,
+    CBAM,
 )
 from fastreid.utils.checkpoint import get_missing_parameters_message, get_unexpected_parameters_message
 from .build import BACKBONE_REGISTRY
@@ -38,7 +39,7 @@ model_urls = {
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, bn_norm, with_ibn=False, with_se=False,
+    def __init__(self, inplanes, planes, bn_norm, with_ibn=False, with_cbam=False, with_se=False, 
                  stride=1, downsample=None, reduction=16):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
@@ -55,6 +56,10 @@ class BasicBlock(nn.Module):
             self.se = nn.Identity()
         self.downsample = downsample
         self.stride = stride
+        if with_cbam:
+            self.cbam = CBAM(planes, reduction)
+        else:
+            self.cbam = None
 
     def forward(self, x):
         identity = x
@@ -69,6 +74,9 @@ class BasicBlock(nn.Module):
         if self.downsample is not None:
             identity = self.downsample(x)
 
+        if not self.cbam is None:
+            out = self.cbam(out)
+
         out += identity
         out = self.relu(out)
 
@@ -78,7 +86,7 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     expansion = 4
 
-    def __init__(self, inplanes, planes, bn_norm, with_ibn=False, with_se=False,
+    def __init__(self, inplanes, planes, bn_norm, with_ibn=False, with_cbam=False, with_se=False, 
                  stride=1, downsample=None, reduction=16):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
@@ -98,6 +106,10 @@ class Bottleneck(nn.Module):
             self.se = nn.Identity()
         self.downsample = downsample
         self.stride = stride
+        if with_cbam:
+            self.cbam = CBAM(planes * self.expansion, reduction)
+        else:
+            self.cbam = None
 
     def forward(self, x):
         residual = x
@@ -117,6 +129,9 @@ class Bottleneck(nn.Module):
         if self.downsample is not None:
             residual = self.downsample(x)
 
+        if not self.cbam is None:
+            out = self.cbam(out)
+
         out += residual
         out = self.relu(out)
 
@@ -124,7 +139,7 @@ class Bottleneck(nn.Module):
 
 
 class ResNet(nn.Module):
-    def __init__(self, last_stride, bn_norm, with_ibn, with_se, with_nl, block, layers, non_layers):
+    def __init__(self, last_stride, bn_norm, with_ibn, with_cbam, with_se, with_nl, block, layers, non_layers):
         self.inplanes = 64
         super().__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
@@ -133,10 +148,10 @@ class ResNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         # self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, ceil_mode=True)
-        self.layer1 = self._make_layer(block, 64, layers[0], 1, bn_norm, with_ibn, with_se)
-        self.layer2 = self._make_layer(block, 128, layers[1], 2, bn_norm, with_ibn, with_se)
-        self.layer3 = self._make_layer(block, 256, layers[2], 2, bn_norm, with_ibn, with_se)
-        self.layer4 = self._make_layer(block, 512, layers[3], last_stride, bn_norm, with_se=with_se)
+        self.layer1 = self._make_layer(block, 64, layers[0], 1, bn_norm, with_ibn, with_cbam, with_se)
+        self.layer2 = self._make_layer(block, 128, layers[1], 2, bn_norm, with_ibn, with_cbam, with_se)
+        self.layer3 = self._make_layer(block, 256, layers[2], 2, bn_norm, with_ibn, with_cbam, with_se)
+        self.layer4 = self._make_layer(block, 512, layers[3], last_stride, bn_norm, with_cbam=with_cbam, with_se=with_se)
 
         self.random_init()
 
@@ -145,7 +160,7 @@ class ResNet(nn.Module):
         else:       self.NL_1_idx = self.NL_2_idx = self.NL_3_idx = self.NL_4_idx = []
         # fmt: on
 
-    def _make_layer(self, block, planes, blocks, stride=1, bn_norm="BN", with_ibn=False, with_se=False):
+    def _make_layer(self, block, planes, blocks, stride=1, bn_norm="BN", with_ibn=False, with_cbam=False, with_se=False):
         downsample = None
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
@@ -155,10 +170,10 @@ class ResNet(nn.Module):
             )
 
         layers = []
-        layers.append(block(self.inplanes, planes, bn_norm, with_ibn, with_se, stride, downsample))
+        layers.append(block(self.inplanes, planes, bn_norm, with_ibn, with_cbam, with_se, stride, downsample))
         self.inplanes = planes * block.expansion
         for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes, bn_norm, with_ibn, with_se))
+            layers.append(block(self.inplanes, planes, bn_norm, with_ibn, with_cbam, with_se))
 
         return nn.Sequential(*layers)
 
@@ -299,6 +314,7 @@ def build_resnet_backbone(cfg):
     last_stride   = cfg.MODEL.BACKBONE.LAST_STRIDE
     bn_norm       = cfg.MODEL.BACKBONE.NORM
     with_ibn      = cfg.MODEL.BACKBONE.WITH_IBN
+    with_cbam     = cfg.MODEL.BACKBONE.WITH_CBAM
     with_se       = cfg.MODEL.BACKBONE.WITH_SE
     with_nl       = cfg.MODEL.BACKBONE.WITH_NL
     depth         = cfg.MODEL.BACKBONE.DEPTH
@@ -325,7 +341,7 @@ def build_resnet_backbone(cfg):
         '101x': Bottleneck
     }[depth]
 
-    model = ResNet(last_stride, bn_norm, with_ibn, with_se, with_nl, block,
+    model = ResNet(last_stride, bn_norm, with_ibn, with_cbam, with_se, with_nl, block,
                    num_blocks_per_stage, nl_layers_per_stage)
     if pretrain:
         # Load pretrain path if specifically
@@ -347,6 +363,7 @@ def build_resnet_backbone(cfg):
             state_dict = init_pretrained_weights(key)
 
         incompatible = model.load_state_dict(state_dict, strict=False)
+        print("check incompatible keys", incompatible)
         if incompatible.missing_keys:
             logger.info(
                 get_missing_parameters_message(incompatible.missing_keys)

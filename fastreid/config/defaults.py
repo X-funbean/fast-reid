@@ -39,6 +39,8 @@ _C.MODEL.BACKBONE.FEAT_DIM = 2048
 _C.MODEL.BACKBONE.NORM = "BN"
 # If use IBN block in backbone
 _C.MODEL.BACKBONE.WITH_IBN = False
+# If use CBAM block in backbone
+_C.MODEL.BACKBONE.WITH_CBAM = False
 # If use SE block in backbone
 _C.MODEL.BACKBONE.WITH_SE = False
 # If use Non-local block in backbone
