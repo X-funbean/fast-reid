@@ -363,7 +363,6 @@ def build_resnet_backbone(cfg):
             state_dict = init_pretrained_weights(key)
 
         incompatible = model.load_state_dict(state_dict, strict=False)
-        print("check incompatible keys", incompatible)
         if incompatible.missing_keys:
             logger.info(
                 get_missing_parameters_message(incompatible.missing_keys)
