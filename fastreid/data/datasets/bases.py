@@ -168,3 +168,24 @@ class ImageDataset(Dataset):
             numalign="left",
         )
         logger.info(f"=> Loaded {self.__class__.__name__} in csv format: \n" + colored(table, "cyan"))
+
+    def show_all(self):
+        num_train_pids, num_train_cams = self.parse_data(self.train)
+        num_query_pids, num_query_cams = self.parse_data(self.query)
+        num_gallery_pids, num_gallery_cams = self.parse_data(self.gallery)
+
+        headers = ['subset', '# ids', '# images', '# cameras']
+        csv_results = [
+            ['train', num_train_pids, len(self.train), num_train_cams],
+            ['query', num_query_pids, len(self.query), num_query_cams],
+            ['gallery', num_gallery_pids, len(self.gallery), num_gallery_cams],
+        ]
+
+        # tabulate it
+        table = tabulate(
+            csv_results,
+            tablefmt="pipe",
+            headers=headers,
+            numalign="left",
+        )
+        logger.info(f"=> Loaded {self.__class__.__name__} in csv format: \n" + colored(table, "cyan"))
