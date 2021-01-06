@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 
 from fastreid.utils import comm
 from . import samplers
-from .common import CommDataset
+from .common import CommDataset, StudyDataset
 from .datasets import DATASET_REGISTRY
 from .transforms import build_transforms
 
@@ -81,6 +81,43 @@ def build_reid_test_loader(cfg, dataset_name, **kwargs):
         pin_memory=True,
     )
     return test_loader, len(dataset.query)
+
+
+def build_reid_all_loader(cfg, dataset_name, **kwargs):
+    """
+    for traversing the whole dataset (train, query, gallery)
+    Code reference:
+        fastreid/data/build.py->build_reid_test_loader()
+    """
+
+    cfg = cfg.clone()
+
+    dataset = DATASET_REGISTRY.get(dataset_name)(root=_root, **kwargs)
+    len_dict = {
+        'train': len(dataset.train),
+        'query': len(dataset.query),
+        'gallery': len(dataset.gallery)
+    }
+
+    if comm.is_main_process():
+        dataset.show_all()
+    items = dataset.train + dataset.query + dataset.gallery
+    # items = dataset.query + dataset.gallery
+
+    transforms = build_transforms(cfg, is_train=False)
+    dataset = StudyDataset(items, transforms, relabel=False)
+
+    mini_batch_size = cfg.MODEL.IMS_PER_BATCH // comm.get_world_size()
+    data_sampler = samplers.InferenceSampler(len(dataset))
+    batch_sampler = torch.utils.data.BatchSampler(data_sampler, mini_batch_size, False)
+    data_loader = DataLoader(
+        dataset,
+        batch_sampler=batch_sampler,
+        num_workers=4,  # save some memory
+        collate_fn=fast_batch_collator,
+        pin_memory=True,
+    )
+    return data_loader, len_dict
 
 
 def trivial_batch_collator(batch):
