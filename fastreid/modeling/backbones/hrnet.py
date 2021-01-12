@@ -1,6 +1,7 @@
 """
 Code references:
     https://github.com/HRNet/HRNet-Image-Classification/blob/master/lib/models/cls_hrnet.py
+    https://github.com/HRNet/HRNet-Object-Detection/blob/master/configs/hrnet/faster_rcnn_hrnetv2p_w32_syncbn_mstrain_1x.py
     fastreid/modeling/backbones/resnet.py
     fastreid/modeling/backbones/osnet.py
 """
@@ -9,6 +10,7 @@ import logging
 
 import torch
 from torch import nn
+import torchsnooper
 
 from fastreid.utils import comm
 from fastreid.utils.checkpoint import (
@@ -19,8 +21,10 @@ from .build import BACKBONE_REGISTRY
 
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
+model_url = "https://github.com/HRNet/HRNet-Image-Classification"
 model_urls = {
-    "hrnetv2_w32": "https://public.dm.files.1drv.com/y4mFt7AvvfqCk4vStf6rvveEbBx7Mc7RGu-BC66fsMFlnwU_JQZM0oWlDfjC7l_d5Y-4oknnEt-E1QI6hpF_dRFefpK9-UiqEufP5o8AuwiiyQQx1XT143BVZeCzOfmG-khDxTSnM4LsilOeLHJd9mFX_8pWlLybr8DvOCD-uhNmkllqEaNI6uxWVYS_pOBB74krqrJJiP7IYE6ysvkQ41jguoxgQ26AOUtKqKhfK5yJwU?access_token=EwAYA61DBAAUmcDj0azQ5tf1lkBfAvHLBzXl5ugAAZAM9VB5RiHzc1EsZtA3ki36OkM0QxeYvy6LuFrSd67YW0iMk01HDFbeujKvTIq1cTie/g8lhh00nloTy2AuDgtgM4Krn9RmklgIF1uFztFgC2OuzMeML5MMdLSIE0y8/yFduw5a%2bC9onUw8R3uDzDG6os/1BAjBP8L0OMOuf6A8MHFhI%2b34klfdQg20m6DqBZC2npDw4hEuRWhSVwQqtc3u4c8SowbaTHRgB8pD11zXOCxnPYIQvczXsLWMz2P6Jykhgb4ysuQO1N8B6ZOd0fmIkNv9EMFo2/BI1GaBUujDVoI6udbem3sIxe/iK1KPTpQW7rf2Ni3GqUvyRoQLXpcDZgAACDeu85qfBOPA6AGrlk6GqcYRIQhb7ighEgJg8b5FuAKHwHpiMW/2hqqhwIhxC%2b4BA9Es3KWNDj6X22NhATfmFsvDh4%2bAwRToqUUtDzUr%2b8cnFTogPgnVDbADgiFKb2ZPX7XdUCVc9LeNWB/MaOCWoMBDkMSknKABECnihmBTLUqgTt4Ew9dL8AYJC7ypAiIZITGcdabsxIhB6IRV%2bJKQ9E5%2bkOrFTXV2KEPULayTrki%2bCz7DLUYFgC/6NTTwKaA86oU%2bhxgvzBv3wpotihMAu5nVODkUTZY6pFWy98l3mrmyYD1mdHWafr/QnwcToij1Nc8uazbI0kap/AvzqBS3Jty68UDfk/mObcSFAPKLczxZyIUTE%2bw88ZCaI4Rc2hAZb8mSMXFV9EEP6urMMEh7fONGQE/vfn4fHJA3bQcy2VwwroC0SpuTnGcmscJO4rVCJldcFQgn%2bzM3ydiSEZGawWd1kT1bCI639BqJZVNeCNwnJ6Dixoemz3UjZrMUrMrSjkKVCJOu0Pwf8Y9uN9BzL8YQQy6uT85UK6jgy%2bEUqqHY2CSn79/aNWzI%2bFEV1NbTvDF3NLoOYHZMXZhKjrI3nENmoiqDgAciF08vonGjZlaPwl3ZIOKb8dCBieZhEV7JHpn/qtZTCEZeczFQGjuFm%2bXpwgAC",
+    "hrnetv2_w18": None,
+    "hrnetv2_w32": None,
 }
 
 
@@ -275,6 +279,7 @@ class HighResolutionModule(nn.Module):
     def get_num_inchannels(self):
         return self.num_inchannels
 
+    # @torchsnooper.snoop()
     def forward(self, x):
         if self.num_branches == 1:
             return [self.branches[0](x[0])]
@@ -354,7 +359,9 @@ class HRNet(nn.Module):
             num_channels[i] * block.expansion for i in range(len(num_channels))
         ]
         self.transition3 = self._make_transition_layer(pre_stage_channels, num_channels)
-        self.stage4, pre_stage_channels = self._make_stage(stage4_config, num_channels)
+        self.stage4, pre_stage_channels = self._make_stage(
+            stage4_config, num_channels, multi_scale_output=True
+        )
 
         self.incre_modules, self.downsamp_modules, self.final_layer = self._make_head(
             pre_stage_channels
@@ -519,7 +526,7 @@ class HRNet(nn.Module):
         x = self.relu(x)
 
         # stage 1
-        x = self.stage1(x)
+        x = self.layer1(x)
 
         # stage 2
         x_list = []
@@ -541,7 +548,7 @@ class HRNet(nn.Module):
 
         # stage 4
         x_list = []
-        for i in range(self.stage3_cfg["NUM_BRANCHES"]):
+        for i in range(self.stage4_cfg["NUM_BRANCHES"]):
             if self.transition3[i] is not None:
                 x_list.append(self.transition3[i](y_list[-1]))
             else:
@@ -604,7 +611,17 @@ def init_pretrained_weights(key):
 
     if not os.path.exists(cached_file):
         if comm.is_main_process():
-            wget.download(model_urls[key], cached_file)
+            if model_urls[key] is not None:
+                try:
+                    wget.download(model_urls[key], cached_file)
+                except OSError as e:
+                    raise FileNotFoundError(
+                        f"Cannot download checkpoint file {filename} from {model_urls[key]}, \nplease check the specified url or manually download it from {model_url}"
+                    )
+            else:
+                raise FileNotFoundError(
+                    f"No url specified for {filename},\nplease manually download it from {model_url}"
+                )
 
     comm.synchronize()
 
@@ -630,27 +647,33 @@ def build_hrnet_backbone(cfg):
     # fmt: on
 
     num_modules_per_stage = {
-        "v2_w32": [1, 1, 4, 3],
+        "w18": [1, 1, 4, 3],
+        "w32": [1, 1, 4, 3],
     }[depth]
 
     num_branches_per_stage = {
-        "v2_w32": [1, 2, 3, 4],
+        "w18": [1, 2, 3, 4],
+        "w32": [1, 2, 3, 4],
     }[depth]
 
     type_block_per_stage = {
-        "v2_w32": ["BOTTLENECK", "BASIC", "BASIC", "BASIC"],
+        "w18": ["BOTTLENECK", "BASIC", "BASIC", "BASIC"],
+        "w32": ["BOTTLENECK", "BASIC", "BASIC", "BASIC"],
     }[depth]
 
     num_blocks_per_stage = {
-        "v2_w32": [(4,), (4, 4), (4, 4, 4), (4, 4, 4, 4)],
+        "w18": [(4,), (4, 4), (4, 4, 4), (4, 4, 4, 4)],
+        "w32": [(4,), (4, 4), (4, 4, 4), (4, 4, 4, 4)],
     }[depth]
 
     num_channels_per_stage = {
-        "v2_w32": [(64,), (32, 64), (32, 64, 128), (32, 64, 128, 256)],
+        "w18": [(64,), (18, 36), (18, 36, 72), (18, 36, 72, 144)],
+        "w32": [(64,), (32, 64), (32, 64, 128), (32, 64, 128, 256)],
     }[depth]
 
     fuse_method_per_stage = {
-        "v2_w32": ["SUM", "SUM", "SUM", "SUM"],
+        "w18": ["SUM", "SUM", "SUM", "SUM"],
+        "w32": ["SUM", "SUM", "SUM", "SUM"],
     }[depth]
 
     stage_configs = [
@@ -681,7 +704,7 @@ def build_hrnet_backbone(cfg):
                 raise e
         else:
             pretrain_key = f"hrnetv2_{depth}"
-            state_dict = init_pretrained_weights(model, pretrain_key)
+            state_dict = init_pretrained_weights(pretrain_key)
 
         incompatible = model.load_state_dict(state_dict, strict=False)
         if incompatible.missing_keys:

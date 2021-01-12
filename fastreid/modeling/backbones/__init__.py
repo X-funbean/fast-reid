@@ -11,4 +11,4 @@ from .osnet import build_osnet_backbone
 from .resnest import build_resnest_backbone
 from .resnext import build_resnext_backbone
 from .regnet import build_regnet_backbone, build_effnet_backbone
-from .harnet import build_hrnet_backbone
+from .hrnet import build_hrnet_backbone
