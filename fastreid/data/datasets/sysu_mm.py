@@ -5,18 +5,18 @@
 """
 
 import os
-from scipy.io import loadmat
 from glob import glob
 
 from fastreid.data.datasets import DATASET_REGISTRY
 from fastreid.data.datasets.bases import ImageDataset
-import pdb
 
 __all__ = ['SYSU_mm', ]
 
 
 @DATASET_REGISTRY.register()
 class SYSU_mm(ImageDataset):
+    """sysu mm
+    """
     dataset_dir = "SYSU-MM01"
     dataset_name = "sysumm01"
 
@@ -35,7 +35,7 @@ class SYSU_mm(ImageDataset):
         data = []
 
         file_path_list = ['cam1', 'cam2', 'cam4', 'cam5']
-        
+
         for file_path in file_path_list:
             camid = self.dataset_name + "_" + file_path
             pid_list = os.listdir(os.path.join(train_path, file_path))
@@ -45,4 +45,3 @@ class SYSU_mm(ImageDataset):
                 for img_path in img_list:
                     data.append([img_path, pid, camid])
         return data
-

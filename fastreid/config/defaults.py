@@ -130,8 +130,8 @@ _C.MODEL.PIXEL_STD = [0.229*255, 0.224*255, 0.225*255]
 # -----------------------------------------------------------------------------
 
 _C.KD = CN()
-_C.KD.MODEL_CONFIG = ""
-_C.KD.MODEL_WEIGHTS = ""
+_C.KD.MODEL_CONFIG = ['',]
+_C.KD.MODEL_WEIGHTS = ['',]
 
 # -----------------------------------------------------------------------------
 # INPUT
@@ -240,7 +240,7 @@ _C.SOLVER.ETA_MIN_LR = 1e-7
 
 # Warmup options
 _C.SOLVER.WARMUP_FACTOR = 0.1
-_C.SOLVER.WARMUP_EPOCHS = 10
+_C.SOLVER.WARMUP_ITERS = 1000
 _C.SOLVER.WARMUP_METHOD = "linear"
 
 # Backbone freeze iters

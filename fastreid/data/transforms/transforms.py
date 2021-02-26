@@ -121,41 +121,43 @@ class RandomPatch(object):
 
 class AugMix(object):
     """ Perform AugMix augmentation and compute mixture.
-    Args:
-        prob: Probability of taking augmix
-        aug_prob_coeff: Probability distribution coefficients.
-        mixture_width: Number of augmentation chains to mix per augmented example.
-        mixture_depth: Depth of augmentation chains. -1 denotes stochastic depth in [1, 3]'
-        aug_severity: Severity of underlying augmentation operators (between 1 to 10).
     """
 
     def __init__(self, prob=0.5, aug_prob_coeff=0.1, mixture_width=3, mixture_depth=1, aug_severity=1):
-        self.prob = prob
+        """
+        Args:
+            prob: Probability of taking augmix
+            aug_prob_coeff: Probability distribution coefficients.
+            mixture_width: Number of augmentation chains to mix per augmented example.
+            mixture_depth: Depth of augmentation chains. -1 denotes stochastic depth in [1, 3]'
+            aug_severity: Severity of underlying augmentation operators (between 1 to 10).
+        """
+        # fmt: off
+        self.prob           = prob
         self.aug_prob_coeff = aug_prob_coeff
-        self.mixture_width = mixture_width
-        self.mixture_depth = mixture_depth
-        self.aug_severity = aug_severity
-        self.augmentations = augmentations
+        self.mixture_width  = mixture_width
+        self.mixture_depth  = mixture_depth
+        self.aug_severity   = aug_severity
+        self.augmentations  = augmentations
+        # fmt: on
 
     def __call__(self, image):
         """Perform AugMix augmentations and compute mixture.
+
         Returns:
           mixed: Augmented and mixed image.
         """
         if random.random() > self.prob:
-            return np.asarray(image)
+            # Avoid the warning: the given NumPy array is not writeable
+            return np.asarray(image).copy()
 
         ws = np.float32(
             np.random.dirichlet([self.aug_prob_coeff] * self.mixture_width))
         m = np.float32(np.random.beta(self.aug_prob_coeff, self.aug_prob_coeff))
 
-        # image = np.asarray(image, dtype=np.float32).copy()
-        # mix = np.zeros_like(image)
         mix = np.zeros([image.size[1], image.size[0], 3])
-        # h, w = image.shape[0], image.shape[1]
         for i in range(self.mixture_width):
             image_aug = image.copy()
-            # image_aug = Image.fromarray(image.copy().astype(np.uint8))
             depth = self.mixture_depth if self.mixture_depth > 0 else np.random.randint(1, 4)
             for _ in range(depth):
                 op = np.random.choice(self.augmentations)

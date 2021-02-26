@@ -5,6 +5,9 @@ from ..utils.events import get_event_storage
 
 
 class BaseModule(nn.Module):
+    """
+    A base Module for ReID models
+    """
     def __init__(self, cfg):
         super().__init__()
         self._cfg = cfg
