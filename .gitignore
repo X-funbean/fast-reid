@@ -9,3 +9,12 @@ logs
 /xfb/307Test
 /datasets
 datasets
+test.py
+train.sh
+/configs
+configs
+*.sh
+*.c
+/images
+/tools/alphapose
+/xfb/307
