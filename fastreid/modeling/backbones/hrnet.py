@@ -10,8 +10,10 @@ import logging
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 import torchsnooper
 
+from fastreid.layers import MS_CAM
 from fastreid.utils import comm
 from fastreid.utils.checkpoint import (
     get_missing_parameters_message,
@@ -111,14 +113,14 @@ class Bottleneck(nn.Module):
 
 class HighResolutionModule(nn.Module):
     def __init__(
-        self,
-        num_branches,
-        blocks,
-        num_blocks,
-        num_inchannels,
-        num_channels,
-        fuse_method,
-        multi_scale_output=True,
+            self,
+            num_branches,
+            blocks,
+            num_blocks,
+            num_inchannels,
+            num_channels,
+            fuse_method,
+            multi_scale_output=True,
     ):
         super(HighResolutionModule, self).__init__()
         self._check_branches(
@@ -138,7 +140,7 @@ class HighResolutionModule(nn.Module):
         self.relu = nn.ReLU(False)
 
     def _check_branches(
-        self, num_branches, blocks, num_blocks, num_inchannels, num_channels
+            self, num_branches, blocks, num_blocks, num_inchannels, num_channels
     ):
         if num_branches != len(num_blocks):
             error_msg = "NUM_BRANCHES({}) <> NUM_BLOCKS({})".format(
@@ -164,9 +166,9 @@ class HighResolutionModule(nn.Module):
     def _make_one_branch(self, branch_index, block, num_blocks, num_channels, stride=1):
         downsample = None
         if (
-            stride != 1
-            or self.num_inchannels[branch_index]
-            != num_channels[branch_index] * block.expansion
+                stride != 1
+                or self.num_inchannels[branch_index]
+                != num_channels[branch_index] * block.expansion
         ):
             downsample = nn.Sequential(
                 nn.Conv2d(
@@ -305,10 +307,12 @@ blocks_dict = {"BASIC": BasicBlock, "BOTTLENECK": Bottleneck}
 
 class HRNet(nn.Module):
     def __init__(
-        self,
-        stage_configs,
+            self,
+            cfg,
+            stage_configs,
     ):
         super().__init__()
+        self.cfg = cfg
         self.stage_configs = stage_configs
 
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=2, padding=1, bias=False)
@@ -363,9 +367,28 @@ class HRNet(nn.Module):
             stage4_config, num_channels, multi_scale_output=True
         )
 
-        self.incre_modules, self.downsamp_modules, self.final_layer = self._make_head(
-            pre_stage_channels
-        )
+        if cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE == "classification":
+            self.incre_modules, self.downsamp_modules, self.final_layer = self._make_head(pre_stage_channels)
+        elif cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE == "V2":
+            final_inp_channels = pre_stage_channels
+            self.head = nn.Sequential(
+                nn.Conv2d(
+                    in_channels=final_inp_channels,
+                    out_channels=final_inp_channels,
+                    kernel_size=1,
+                    stride=1,
+                    padding=1 if cfg.MODEL.BACKBONE.HRNET.FINAL_CONV_KERNEL == 3 else 0,
+                ),
+                nn.BatchNorm2d(final_inp_channels, momentum=BN_MOMENTUM),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(
+                    in_channels=final_inp_channels,
+                    out_channels=cfg.MODEL.BACKBONE.FEAT_DIM,
+                    kernel_size=cfg.MODEL.BACKBONE.HRNET.FINAL_CONV_KERNEL,
+                    stride=1,
+                    padding=1 if cfg.MODEL.BACKBONE.HRNET.FINAL_CONV_KERNEL == 3 else 0,
+                ),
+            )
 
         self.random_init()
 
@@ -556,13 +579,23 @@ class HRNet(nn.Module):
         y_list = self.stage4(x_list)
 
         # head
-        y = self.incre_modules[0](y_list[0])
-        for i in range(len(self.downsamp_modules)):
-            y = self.incre_modules[i + 1](y_list[i + 1]) + self.downsamp_modules[i](y)
-
-        y = self.final_layer(y)
-
-        return y
+        if self.cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE == "classification":
+            y = self.incre_modules[0](y_list[0])
+            for i in range(len(self.downsamp_modules)):
+                y = self.incre_modules[i + 1](y_list[i + 1]) + self.downsamp_modules[i](y)
+            y = self.final_layer(y)
+            return y
+        elif self.cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE == "V2":
+            x = y_list
+            height, width = x[0].size(2), x[0].size(3)
+            x1 = F.interpolate(x[1], size=(height, width), mode='bilinear', align_corners=False)
+            x2 = F.interpolate(x[2], size=(height, width), mode='bilinear', align_corners=False)
+            x3 = F.interpolate(x[3], size=(height, width), mode='bilinear', align_corners=False)
+            x = torch.cat([x[0], x1, x2, x3], 1)
+            x = self.head(x)
+            return x
+        elif self.cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE == "V1":
+            return y_list[0]
 
     def random_init(self):
         for m in self.modules():
@@ -639,11 +672,12 @@ def build_hrnet_backbone(cfg):
         HRNet: a :class:`HRNet` instance
     """
     # fmt: off
-    pretrain      = cfg.MODEL.BACKBONE.PRETRAIN
+    pretrain = cfg.MODEL.BACKBONE.PRETRAIN
     pretrain_path = cfg.MODEL.BACKBONE.PRETRAIN_PATH
     # with_ibn      = cfg.MODEL.BACKBONE.WITH_IBN
     # bn_norm       = cfg.MODEL.BACKBONE.NORM
-    depth         = cfg.MODEL.BACKBONE.DEPTH
+    depth = cfg.MODEL.BACKBONE.DEPTH
+    head_type = cfg.MODEL.HRNET.HEAD_TYPE
     # fmt: on
 
     num_modules_per_stage = {
@@ -688,7 +722,7 @@ def build_hrnet_backbone(cfg):
         for i in range(4)
     ]
 
-    model = HRNet(stage_configs)
+    model = HRNet(cfg, stage_configs)
 
     if pretrain:
         # Load pretrain path if specifically

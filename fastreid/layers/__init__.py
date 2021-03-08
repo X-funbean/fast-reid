@@ -18,3 +18,4 @@ from .se_layer import SELayer
 from .splat import SplAtConv2d, DropBlock2D
 from .gather_layer import GatherLayer
 from .cbam import CBAM
+from .aff import *

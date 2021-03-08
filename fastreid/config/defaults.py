@@ -53,6 +53,13 @@ _C.MODEL.BACKBONE.PRETRAIN = True
 # Pretrain model path
 _C.MODEL.BACKBONE.PRETRAIN_PATH = ''
 
+# Specifics for HRNet
+_C.MODEL.BACKBONE.HRNET = CN()
+# Head type of HRNet, can be `V1`, `V2`, `V2p` or `classification`
+_C.MODEL.BACKBONE.HRNET.HEAD_TYPE = 'classification'
+# refer to https://github.com/lyrgwlr/HRNet-Facial-Landmark-Detection-v1/blob/master/lib/config/defaults.py
+_C.MODEL.BACKBONE.HRNET.FINAL_CONV_KERNEL = 1
+
 # ---------------------------------------------------------------------------- #
 # REID HEADS options
 # ---------------------------------------------------------------------------- #
