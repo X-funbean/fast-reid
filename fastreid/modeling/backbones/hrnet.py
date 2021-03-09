@@ -2,6 +2,7 @@
 Code references:
     https://github.com/HRNet/HRNet-Image-Classification/blob/master/lib/models/cls_hrnet.py
     https://github.com/HRNet/HRNet-Object-Detection/blob/master/configs/hrnet/faster_rcnn_hrnetv2p_w32_syncbn_mstrain_1x.py
+    https://github.com/lyrgwlr/HRNet-Facial-Landmark-Detection-v1/blob/master/lib/models/hrnet.py
     fastreid/modeling/backbones/resnet.py
     fastreid/modeling/backbones/osnet.py
 """
@@ -370,7 +371,7 @@ class HRNet(nn.Module):
         if cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE == "classification":
             self.incre_modules, self.downsamp_modules, self.final_layer = self._make_head(pre_stage_channels)
         elif cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE == "V2":
-            final_inp_channels = pre_stage_channels
+            final_inp_channels = sum(pre_stage_channels)
             self.head = nn.Sequential(
                 nn.Conv2d(
                     in_channels=final_inp_channels,
@@ -389,7 +390,25 @@ class HRNet(nn.Module):
                     padding=1 if cfg.MODEL.BACKBONE.HRNET.FINAL_CONV_KERNEL == 3 else 0,
                 ),
             )
-
+        elif cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE == "V1":
+            self.head = nn.Sequential(
+                nn.Conv2d(
+                    in_channels=pre_stage_channels[0],
+                    out_channels=pre_stage_channels[0],
+                    kernel_size=1,
+                    stride=1,
+                    padding=1 if cfg.MODEL.BACKBONE.HRNET.FINAL_CONV_KERNEL == 3 else 0,
+                ),
+                nn.BatchNorm2d(pre_stage_channels[0], momentum=BN_MOMENTUM),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(
+                    in_channels=pre_stage_channels[0],
+                    out_channels=cfg.MODEL.BACKBONE.FEAT_DIM,
+                    kernel_size=cfg.MODEL.BACKBONE.HRNET.FINAL_CONV_KERNEL,
+                    stride=1,
+                    padding=1 if cfg.MODEL.BACKBONE.HRNET.FINAL_CONV_KERNEL == 3 else 0,
+                ),
+            )
         self.random_init()
 
     def _make_head(self, pre_stage_channels):
@@ -595,7 +614,8 @@ class HRNet(nn.Module):
             x = self.head(x)
             return x
         elif self.cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE == "V1":
-            return y_list[0]
+            x = self.head(y_list[0])
+            return x
 
     def random_init(self):
         for m in self.modules():
@@ -677,7 +697,7 @@ def build_hrnet_backbone(cfg):
     # with_ibn      = cfg.MODEL.BACKBONE.WITH_IBN
     # bn_norm       = cfg.MODEL.BACKBONE.NORM
     depth = cfg.MODEL.BACKBONE.DEPTH
-    head_type = cfg.MODEL.HRNET.HEAD_TYPE
+    head_type = cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE
     # fmt: on
 
     num_modules_per_stage = {
@@ -749,11 +769,32 @@ def build_hrnet_backbone(cfg):
 
 
 # if __name__ == "__main__":
-#     model = build_hrnet_backbone(None)
-#     # print(model)
+#     from fastreid.config import cfg
+ 
+#     cfg.MODEL.BACKBONE.NAME = 'build_hrnet_backbone'
+#     cfg.MODEL.BACKBONE.DEPTH = "w18"
 
+#     cfg.MODEL.HEADS.NAME = "EmbeddingHead"
+#     cfg.MODEL.HEADS.NORM = "BN"
+#     cfg.MODEL.HEADS.WITH_BNNECK = True
+#     cfg.MODEL.HEADS.POOL_LAYER = "avgpool"
+#     cfg.MODEL.HEADS.NECK_FEAT = "before"
+#     cfg.MODEL.HEADS.CLS_LAYER = "linear"
+
+#     cfg.MODEL.BACKBONE.HRNET.HEAD_TYPE = 'V1'
+    
+#     model = build_hrnet_backbone(cfg)
 #     state_dict = init_pretrained_weights("hrnetv2_w32")
-
 #     incompatible = model.load_state_dict(state_dict, strict=False)
-
 #     print(incompatible)
+
+#     model.cuda()
+#     x = torch.randn(2, 3, 256, 128)
+#     x = x.cuda()
+#     y = model(x)
+
+#     """
+#     V1/V2 (2, 2048, 64, 32)
+#     classification (2, 2048, 8, 4)
+#     """
+#     print(y.shape)
