@@ -4,11 +4,13 @@
 @contact: sherlockliao01@gmail.com
 """
 
+import os
 import argparse
 import io
 import sys
 
 import onnx
+import onnxoptimizer
 import torch
 from onnxsim import simplify
 from torch.onnx import OperatorExportTypes
@@ -20,6 +22,10 @@ from fastreid.modeling.meta_arch import build_model
 from fastreid.utils.file_io import PathManager
 from fastreid.utils.checkpoint import Checkpointer
 from fastreid.utils.logger import setup_logger
+
+# import some modules added in project like this below
+# sys.path.append('../../projects/FastDistill')
+# from fastdistill import *
 
 logger = setup_logger(name='onnx_export')
 
@@ -49,6 +55,12 @@ def get_parser():
         "--output",
         default='onnx_model',
         help='path to save converted onnx model'
+    )
+    parser.add_argument(
+        '--batch-size',
+        default=1,
+        type=int,
+        help="the maximum batch size of onnx runtime"
     )
     parser.add_argument(
         "--opts",
@@ -96,6 +108,7 @@ def export_onnx_model(model, inputs):
 
     model.apply(_check_eval)
 
+    logger.info("Beginning ONNX file converting")
     # Export the model to ONNX
     with torch.no_grad():
         with io.BytesIO() as f:
@@ -109,11 +122,15 @@ def export_onnx_model(model, inputs):
             )
             onnx_model = onnx.load_from_string(f.getvalue())
 
+    logger.info("Completed convert of ONNX model")
+
     # Apply ONNX's Optimization
-    all_passes = onnx.optimizer.get_available_passes()
+    logger.info("Beginning ONNX model path optimization")
+    all_passes = onnxoptimizer.get_available_passes()
     passes = ["extract_constant_to_initializer", "eliminate_unused_initializer", "fuse_bn_into_conv"]
     assert all(p in all_passes for p in passes)
-    onnx_model = onnx.optimizer.optimize(onnx_model, passes)
+    onnx_model = onnxoptimizer.optimize(onnx_model, passes)
+    logger.info("Completed ONNX model path optimization")
     return onnx_model
 
 
@@ -127,10 +144,11 @@ if __name__ == '__main__':
         cfg.MODEL.HEADS.POOL_LAYER = 'avgpool'
     model = build_model(cfg)
     Checkpointer(model).load(cfg.MODEL.WEIGHTS)
+    model.backbone.deploy(True)
     model.eval()
     logger.info(model)
 
-    inputs = torch.randn(1, 3, cfg.INPUT.SIZE_TEST[0], cfg.INPUT.SIZE_TEST[1])
+    inputs = torch.randn(args.batch_size, 3, cfg.INPUT.SIZE_TEST[0], cfg.INPUT.SIZE_TEST[1])
     onnx_model = export_onnx_model(model, inputs)
 
     model_simp, check = simplify(onnx_model)
@@ -141,6 +159,6 @@ if __name__ == '__main__':
 
     PathManager.mkdirs(args.output)
 
-    onnx.save_model(model_simp, f"{args.output}/{args.name}.onnx")
-
-    logger.info(f"Export onnx model in {args.output} successfully!")
+    save_path = os.path.join(args.output, args.name+'.onnx')
+    onnx.save_model(model_simp, save_path)
+    logger.info("ONNX model file has already saved to {}!".format(save_path))
