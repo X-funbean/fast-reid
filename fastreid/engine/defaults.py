@@ -16,6 +16,7 @@ from collections import OrderedDict
 
 import torch
 import torch.nn.functional as F
+from torch.nn.parallel import DistributedDataParallel
 
 from fastreid.data import build_reid_test_loader, build_reid_train_loader
 from fastreid.evaluation import (ReidEvaluator,
@@ -31,14 +32,6 @@ from fastreid.utils.file_io import PathManager
 from fastreid.utils.logger import setup_logger
 from . import hooks
 from .train_loop import TrainerBase, AMPTrainer, SimpleTrainer
-
-try:
-    import apex
-    from apex import amp
-    from apex.parallel import DistributedDataParallel
-except ImportError:
-    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example if you want to"
-                      "train with DDP")
 
 __all__ = ["default_argument_parser", "default_setup", "DefaultPredictor", "DefaultTrainer"]
 
@@ -92,7 +85,7 @@ def default_setup(cfg, args):
         PathManager.mkdirs(output_dir)
 
     rank = comm.get_rank()
-    setup_logger(output_dir, distributed_rank=rank, name="fvcore")
+    # setup_logger(output_dir, distributed_rank=rank, name="fvcore")
     logger = setup_logger(output_dir, distributed_rank=rank)
 
     logger.info("Rank of current process: {}. World size: {}".format(rank, comm.get_world_size()))
@@ -214,21 +207,16 @@ class DefaultTrainer(TrainerBase):
         model = self.build_model(cfg)
         optimizer = self.build_optimizer(cfg, model)
 
-        optimizer_ckpt = dict(optimizer=optimizer)
-        if cfg.SOLVER.FP16_ENABLED:
-            model, optimizer = amp.initialize(model, optimizer, opt_level="O1")
-            optimizer_ckpt.update(dict(amp=amp))
-
         # For training, wrap with DDP. But don't need this for inference.
         if comm.get_world_size() > 1:
             # ref to https://github.com/pytorch/pytorch/issues/22049 to set `find_unused_parameters=True`
             # for part of the parameters is not updated.
-            # model = DistributedDataParallel(
-            #     model, device_ids=[comm.get_local_rank()], broadcast_buffers=False
-            # )
-            model = DistributedDataParallel(model, delay_allreduce=True)
+            model = DistributedDataParallel(
+                model, device_ids=[comm.get_local_rank()], broadcast_buffers=False,
+                find_unused_parameters=True
+            )
 
-        self._trainer = (AMPTrainer if cfg.SOLVER.FP16_ENABLED else SimpleTrainer)(
+        self._trainer = (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
             model, data_loader, optimizer
         )
 
@@ -242,7 +230,7 @@ class DefaultTrainer(TrainerBase):
             model,
             cfg.OUTPUT_DIR,
             save_to_disk=comm.is_main_process(),
-            **optimizer_ckpt,
+            optimizer=optimizer,
             **self.scheduler,
         )
 
@@ -425,7 +413,7 @@ class DefaultTrainer(TrainerBase):
         """
         logger = logging.getLogger(__name__)
         logger.info("Prepare training set")
-        return build_reid_train_loader(cfg)
+        return build_reid_train_loader(cfg, combineall=cfg.DATASETS.COMBINEALL)
 
     @classmethod
     def build_test_loader(cls, cfg, dataset_name):
@@ -435,7 +423,7 @@ class DefaultTrainer(TrainerBase):
         It now calls :func:`fastreid.data.build_reid_test_loader`.
         Overwrite it if you'd like a different data loader.
         """
-        return build_reid_test_loader(cfg, dataset_name)
+        return build_reid_test_loader(cfg, dataset_name=dataset_name)
 
     @classmethod
     def build_evaluator(cls, cfg, dataset_name, output_dir=None):
@@ -464,7 +452,7 @@ class DefaultTrainer(TrainerBase):
                 )
                 results[dataset_name] = {}
                 continue
-            results_i = inference_on_dataset(model, data_loader, evaluator, flip_test=cfg.TEST.FLIP_ENABLED)
+            results_i = inference_on_dataset(model, data_loader, evaluator, flip_test=cfg.TEST.FLIP.ENABLED)
             results[dataset_name] = results_i
 
             if comm.is_main_process():

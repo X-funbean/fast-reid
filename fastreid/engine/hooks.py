@@ -10,8 +10,8 @@ import time
 from collections import Counter
 
 import torch
-from apex.parallel import DistributedDataParallel
 from torch import nn
+from torch.nn.parallel import DistributedDataParallel
 
 from fastreid.evaluation.testing import flatten_results_dict
 from fastreid.solver import optim
@@ -360,6 +360,7 @@ class EvalHook(HookBase):
                     )
             self.trainer.storage.put_scalars(**flattened_results, smoothing_hint=False)
 
+        torch.cuda.empty_cache()
         # Evaluation may take different time among workers.
         # A barrier make them start the next iteration together.
         comm.synchronize()
